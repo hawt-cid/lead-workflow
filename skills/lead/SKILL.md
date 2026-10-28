@@ -1,45 +1,52 @@
 ---
 name: lead
-description: Token-saving way of working on any project task. The main session leads: it plans, delegates research and implementation to subagents with capped reports, reviews diffs, and keeps all state in files so the context can be cleared between steps. Use when starting or continuing a task, or when the user says "continue", "next step", or invokes /lead.
+description: Token-saving way of working on any project task, with an opt-in deep mode. The main session leads: it plans, delegates research and implementation to subagents with capped reports, reviews diffs, and keeps all state in files so the context can be cleared between steps. Use when starting or continuing a task, or when the user says "continue", "next step", or invokes /lead.
 ---
 
 # Lead
 
 The main session is the **Lead**. It decides, writes task files, briefs agents, reviews their output, and reports to the user. It does **not** bulk-read code or docs and does **not** write production code itself. Everything heavy happens in subagents whose context is thrown away; only short reports come back.
 
+## Environment
+This skill decides how work is split; the tools come from the machine. `~/.claude/lead-profile.md`, if present, overrides the **Roles** defaults. Otherwise prefer specialized agents, skills and MCP servers listed in your context over generic ones, and check an agent type can use a tool before briefing it to. Repo and global `CLAUDE.md` win on conventions, commands and tool choice. If a model or agent is missing, use the closest one and say so once.
+
 ## Roles
-| Role | Model | Does |
+| Role | Default (lean) | Does |
 |---|---|---|
 | Lead | main session (strongest model) | Scope, decisions, task files, briefs, diff review, final report |
-| Researcher | `Explore` agent (codebase) or `general-purpose` with `model: sonnet` (knowledge base via MCP) | Finds facts, returns a capped summary with file paths / page links |
+| Researcher | `Explore` (codebase) or `general-purpose`, `model: sonnet` (knowledge base via MCP) | Finds facts, returns a capped summary with file paths / page links |
 | Builder | `general-purpose`, `model: sonnet`, `isolation: worktree` | Implements one step with tests, commits on its own branch |
 | Janitor | `general-purpose`, `model: haiku` | Docs, config, fixtures, renames, mechanical edits |
 
-If a model is not available on this account, use the closest one and say so once.
+## Depth: lean unless the user says deep
+- **On** only on the user's explicit word: `/lead deep <task>` (whole task), "go deep on S2" (all phases of S2), "deep plan / research / build / review for S2" (that phase). Record it as `Depth:` in TASK.md. Then read `deep.md` in this skill's directory and follow it for those phases.
+- **Suggest** at most once per step, in one line, when stakes are concrete: security, data migrations or deletes, money, concurrency, public APIs, an area the profile lists, conflicting sources on a key fact, or a builder that failed twice. Without a yes, stay lean.
+- **Off** when the step is done (step-level) or when the user says "lean" (task-level). Janitor work is never deep.
 
 ## Files (the only memory between sessions)
 Keep task state out of the repo history unless the team wants it. Default location: `.tasks/` in the repo root, excluded locally with `echo .tasks/ >> .git/info/exclude`.
 
-- `.tasks/<task-slug>/TASK.md`: goal, acceptance criteria, steps with status, **Handoff**, open questions. Template below.
+- `.tasks/<task-slug>/TASK.md`: goal, acceptance criteria, steps with status and depth, **Handoff**, open questions. Template below.
 - `.tasks/facts/<area>.md`: durable facts established by research (how auth works, where X is configured, which KB page is canonical). Each fact has a source (path:line or URL). Research is never repeated if the fact is here.
 
 ## Session start (every time, including after /clear)
-1. State in 3 lines: role (Lead), files you will read (max 3: the TASK.md, relevant facts files), and the definition of done for this session.
+1. State in 3 lines: role (Lead), files you will read (max 4: the profile if present, the TASK.md, up to 2 facts files), and the definition of done for this session. Mention depth only if it is not lean.
 2. Read the `Handoff` section first. It is the source of truth for where things are.
-3. If there is no TASK.md, create one from the user's request before doing anything else. Ask only about things that change the plan; pick sensible defaults otherwise and record them under `Decisions`.
+3. If there is no TASK.md, create one from the user's request before doing anything else. Ask only about things that change the plan; pick sensible defaults otherwise and record them under `Decisions`, including which agents/skills/connectors fill each role.
 
 ## Delegation rules
-- **Research**: never read more than a couple of targeted files yourself. Spawn a researcher with a precise question and a cap: "answer in ≤40 lines, cite path:line or URL for every claim, say what you could not find". Independent questions run as parallel agents in one message.
-- **Knowledge base**: researchers use whatever MCP connector is configured (Confluence, Notion, Jira, Drive…). Tell them which spaces/projects to search and to prefer the most recently updated page when sources conflict, flagging the conflict.
+- **Research**: never read more than a couple of targeted files yourself (deep plan excepted). Spawn a researcher with a precise question and a cap: "answer in ≤40 lines, cite path:line or URL for every claim, say what you could not find". Independent questions run as parallel agents in one message.
+- **Knowledge base**: researchers use whatever MCP connector is configured (Confluence, Notion, Jira, Drive…). Tell them which spaces/projects to search (the profile may list them) and to prefer the most recently updated page when sources conflict, flagging the conflict.
 - **Building**: one step per builder. The brief must include everything in the checklist below. Independent steps may run in parallel worktrees.
 - **Janitor**: mechanical work with an exact spec. Tell it to be brief.
-- Spawning agents for steps in TASK.md is pre-authorized; do not ask each time.
+- Spawning agents for steps in TASK.md is pre-authorized; do not ask each time. This does not pre-authorize deep.
 - Never paste an agent's raw output into the chat. Relay the conclusion, and record durable facts in `.tasks/facts/`.
 
 ### Researcher brief template
 ```
 Question: <one precise question>
 Scope: <dirs / repos / KB spaces to search; what to ignore>
+Tools: <MCP server or skill to use, if any>
 Context we already have: <2-5 lines, or "see .tasks/facts/<area>.md">
 Return in ≤40 lines: the answer, evidence (path:line or URL for each claim), unknowns. No file dumps.
 ```
@@ -47,6 +54,7 @@ Return in ≤40 lines: the answer, evidence (path:line or URL for each claim), u
 ### Builder brief checklist
 - Step ID and its full acceptance criteria (copied, not referenced).
 - Pointers: repo `CLAUDE.md`, the TASK.md, relevant facts files.
+- Skills or MCP tools it should use (test runner, codegen, ticket lookup), from the profile or your context.
 - Constraints and conventions that are easy to miss (from Handoff).
 - "Write or update tests with the change, not after."
 - The exact verification command(s) to run before committing, run one at a time.
@@ -62,7 +70,7 @@ Return in ≤40 lines: the answer, evidence (path:line or URL for each claim), u
 6. If dependencies changed, reinstall on main and tell the user to restart any running dev server.
 
 ## After each completed step
-1. Update TASK.md: tick the step, rewrite the **Handoff** (done, next, gotchas discovered, where the key code lives). Keep it under ~25 lines; delete stale notes.
+1. Update TASK.md: tick the step, rewrite the **Handoff** (done, next, gotchas discovered, where the key code lives). Keep it under ~25 lines; delete stale notes. Reset a step-level depth.
 2. Add new durable facts to `.tasks/facts/`.
 3. Tell the user: *"Step complete. Please run `/clear` before we start the next one."*
 
@@ -72,7 +80,7 @@ Short. Lead with the outcome, then what they must know or decide. No tool transc
 ## TASK.md template
 ```markdown
 # <Task title>
-Source: <ticket link / request>  ·  Status: todo | doing | review | done
+Source: <ticket link / request>  ·  Status: todo | doing | review | done  ·  Depth: lean
 
 ## Goal
 <2-3 sentences: the outcome, not the implementation>
@@ -81,12 +89,13 @@ Source: <ticket link / request>  ·  Status: todo | doing | review | done
 - [ ] ...
 
 ## Steps
-### S1 — <name> · `todo` · [Model: sonnet]
+### S1 — <name> · `todo` · Builder: sonnet · Depth: lean
 Deps: none.
 - [ ] <criterion>
 - [ ] Tests: <what proves it>
 
 ## Decisions
+- Tooling: researcher=<…>, builder=<…>, reviewer=<…>, KB=<…>
 - <decision> (why, date)
 
 ## Handoff (updated YYYY-MM-DD)

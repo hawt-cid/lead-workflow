@@ -1,4 +1,4 @@
-# Global working style (append to ~/.claude/CLAUDE.md)
+# Lead workflow (imported from ~/.claude/CLAUDE.md)
 
 - For any multi-step task, follow the `lead` skill: the main session plans, delegates and reviews; subagents research and build.
 - Never bulk-read code or knowledge-base pages in the main session. Send research to an agent with a precise question and a ≤40-line cap, with sources cited.
