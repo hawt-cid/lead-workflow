@@ -23,11 +23,28 @@ This skill decides how work is split; the tools come from the machine. `~/.claud
 - **Suggest** at most once per step, in one line, when stakes are concrete: security, data migrations or deletes, money, concurrency, public APIs, an area the profile lists, conflicting sources on a key fact, or a builder that failed twice. Without a yes, stay lean.
 - **Off** when the step is done (step-level) or when the user says "lean" (task-level). Janitor work is never deep.
 
+## Tickets vs. tasks
+Tracker tickets (Jira or similar) are the interface to the team and the business. `.tasks/` is the Lead's private workspace. Never mix them.
+- **Words**: "ticket" only means a tracker ticket, named by its key (`PROJ-123`). The Lead's own units are the *task* (TASK.md) and its *steps* (S1, S2…). Never call a step a ticket.
+- **Read-only**: read tickets freely. Create, edit, comment, transition, link or log work only when the user asks for that specific action, and show the exact text first.
+- **No leaks**: step IDs, `.tasks/` paths and TASK.md content never appear in tickets, commits, branches or PRs. Those reference the ticket key as the repo's conventions say.
+- **The ticket owns the requirement**: copy its acceptance criteria into TASK.md tagged with the key; criteria you add are tagged `(ours)`. If the ticket changes or conflicts with the plan, tell the user; do not quietly re-scope.
+- **One task per ticket**: the slug starts with the key (`proj-123-short-name`), so `/lead continue PROJ-123` finds it. TASK.md status is internal and never mirrors or changes the ticket's status.
+- Blockers, scope questions and findings the team should know go to the user as a ready-to-post draft; the user decides whether to post it.
+
 ## Files (the only memory between sessions)
-Keep task state out of the repo history unless the team wants it. Default location: `.tasks/` in the repo root, excluded locally with `echo .tasks/ >> .git/info/exclude`.
+Keep task state out of the repo history unless the team wants it. Location: `.tasks/` in the **main worktree** (`git worktree list --porcelain | sed -n '1s/^worktree //p'`), even when you run in a linked worktree: `git worktree remove` deletes excluded files with the worktree. Exclude it with `echo .tasks/ >> "$(git rev-parse --git-path info/exclude)"` (works from any worktree). If the main worktree is outside your allowed directories, ask the user to restart with `--add-dir <main worktree>`; do not fall back silently.
 
 - `.tasks/<task-slug>/TASK.md`: goal, acceptance criteria, steps with status and depth, **Handoff**, open questions. Template below.
 - `.tasks/facts/<area>.md`: durable facts established by research (how auth works, where X is configured, which KB page is canonical). Each fact has a source (path:line or URL). Research is never repeated if the fact is here.
+
+## Branches and parallel Leads
+Several Leads may run at once, one per ticket, each in its own worktree.
+- **Base branch** = the team's development branch: the profile's `Base branch`, else `develop` if it exists, else the repo's default branch. Ticket branches start from it and PRs target it.
+- **Integration branch** = the branch your worktree is on (the ticket branch). If that is the base branch, create the ticket branch first from the fresh base (`git fetch origin <base>`, then branch from `origin/<base>`). If `git log --oneline origin/<base>..HEAD` shows commits that are not this ticket's, the branch was cut from elsewhere (e.g. `main`): stop and tell the user. Builders branch from the integration branch and you merge them into it. Never merge into or push the base branch (or `main`); they are reached through the team's PR process.
+- **Stay in your lane**: TASK.md records `Worktree` and `Branch`. At session start, if yours differ, stop and tell the user where that task lives. Never touch another task's files, worktrees or branches.
+- **Shared facts**: re-read a facts file right before editing it and only add or correct lines; another Lead may have just written to it.
+- **Shared resources**: ports, databases, containers and caches may be in use by another Lead. If verification fails with "address in use", a lock, or data you did not create, suspect that before debugging, and tell the user. The repo `CLAUDE.md` should say how to run per-worktree (port, DB name).
 
 ## Session start (every time, including after /clear)
 1. State in 3 lines: role (Lead), files you will read (max 4: the profile if present, the TASK.md, up to 2 facts files), and the definition of done for this session. Mention depth only if it is not lean.
@@ -53,21 +70,22 @@ Return in ≤40 lines: the answer, evidence (path:line or URL for each claim), u
 
 ### Builder brief checklist
 - Step ID and its full acceptance criteria (copied, not referenced).
+- "Base: <integration branch> @ <sha>. Before anything else, check HEAD is that commit; if not, `git reset --hard <sha>` (your worktree is fresh). Install dependencies if the worktree has none."
 - Pointers: repo `CLAUDE.md`, the TASK.md, relevant facts files.
 - Skills or MCP tools it should use (test runner, codegen, ticket lookup), from the profile or your context.
 - Constraints and conventions that are easy to miss (from Handoff).
 - "Write or update tests with the change, not after."
 - The exact verification command(s) to run before committing, run one at a time.
-- "Commit on your worktree branch with a conventional commit message. Do not merge, do not edit TASK.md."
+- "Commit on your worktree branch with a conventional commit message that references <ticket key> as the repo's conventions say. Never mention step IDs or `.tasks/`. Do not merge, do not edit TASK.md, do not touch the ticket."
 - "Report in ≤20 lines: branch + commit, what changed, test results with counts, deviations, open questions."
 
 ## Review (Lead, before merge)
-1. `git diff --stat main...<branch>`, then read the diff of the risky files only (logic, security, data access). Skip lockfiles and generated files.
+1. `git diff --stat <integration>...<branch>`, then read the diff of the risky files only (logic, security, data access). Skip lockfiles and generated files.
 2. Check against the acceptance criteria, not against the builder's report. Reports overstate.
 3. Small issues: send them back to the same builder with `SendMessage` (it keeps its context) and ask for a ≤5-line report. Do not fix them yourself.
-4. Merge (prefer fast-forward), then run the verification commands yourself on the main branch. Report failures with output; never claim green without running it.
-5. Remove the worktree and branch.
-6. If dependencies changed, reinstall on main and tell the user to restart any running dev server.
+4. Merge into the integration branch (prefer fast-forward), then run the verification commands yourself there. Report failures with output; never claim green without running it.
+5. Remove the builder's worktree and branch.
+6. If dependencies changed, reinstall in your worktree and tell the user to restart this worktree's dev server, if any.
 
 ## After each completed step
 1. Update TASK.md: tick the step, rewrite the **Handoff** (done, next, gotchas discovered, where the key code lives). Keep it under ~25 lines; delete stale notes. Reset a step-level depth.
@@ -80,13 +98,15 @@ Short. Lead with the outcome, then what they must know or decide. No tool transc
 ## TASK.md template
 ```markdown
 # <Task title>
-Source: <ticket link / request>  ·  Status: todo | doing | review | done  ·  Depth: lean
+Source: <PROJ-123 + link, or the request>  ·  Status (internal): todo | doing | review | done  ·  Depth: lean
+Worktree: <absolute path>  ·  Branch: <ticket branch>
 
 ## Goal
 <2-3 sentences: the outcome, not the implementation>
 
 ## Acceptance criteria
-- [ ] ...
+- [ ] (PROJ-123) <copied from the ticket>
+- [ ] (ours) <added by us>
 
 ## Steps
 ### S1 — <name> · `todo` · Builder: sonnet · Depth: lean

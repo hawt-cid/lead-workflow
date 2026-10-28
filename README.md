@@ -26,7 +26,22 @@ Without a profile, the Lead maps roles from whatever agents, skills and connecto
 1. In the work repo: `/lead <paste the ticket or describe the task>`.
    Claude creates `.tasks/<slug>/TASK.md`, sends research to agents, and proposes steps.
 2. Approve or adjust the steps. Builders run in worktrees; Claude reviews and merges.
-3. After each step: `/clear`, then `/lead continue <slug>`.
+3. After each step: `/clear`, then `/lead continue <slug>` (or `/lead continue PROJ-123`).
+
+## Parallel Leads
+One Lead per ticket, each in its own worktree. Start each one from the main checkout, with `develop` up to date:
+```bash
+cd ~/work/repo && git fetch origin develop && claude -w PROJ-123 --add-dir "$(pwd)"
+```
+`--add-dir` lets the Lead keep its task files in the main checkout's `.tasks/`. They survive when the worktree is removed, and research facts are shared between Leads.
+Ticket branches start from `develop` (set `Base branch` in the profile if a repo differs). If a worktree's branch was cut from somewhere else, the Lead stops and tells you.
+Each Lead merges builders into its own ticket branch and never into `develop` or `main`; the ticket branch reaches `develop` through your normal PR flow.
+If tests use fixed ports or a shared database, say in the repo `CLAUDE.md` how to run them per worktree.
+
+## Jira
+Jira tickets and the Lead's own task files stay separate. Claude only reads tickets. It writes to Jira (comments, status, new tickets)
+only when you ask for that specific action, and shows you the text first. Commits, branches and PRs reference the ticket key,
+never internal step IDs or `.tasks/`.
 
 ## Deep mode (opt-in)
 Lean is the default and Claude never switches on its own. It may suggest deep once per step when the stakes are concrete, e.g. auth, migrations or public APIs.
