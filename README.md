@@ -4,6 +4,7 @@ A portable copy of the Opus-plans / Sonnet-builds workflow from the palovka repo
 It runs lean by default. You can switch on a "deep" mode for the steps where quality matters more than tokens.
 
 ## Install (on the work machine)
+Quickest: paste the prompt from [`INSTALL-PROMPT.md`](INSTALL-PROMPT.md) into Claude Code and it does the steps below for you. You can also run them by hand:
 ```bash
 git clone <this repo> ~/lead-workflow
 mkdir -p ~/.claude/skills
