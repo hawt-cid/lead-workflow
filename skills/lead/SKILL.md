@@ -14,9 +14,10 @@ This skill decides how work is split; the tools come from the machine. `~/.claud
 | Role | Default (lean) | Does |
 |---|---|---|
 | Lead | main session (strongest model) | Scope, decisions, task files, briefs, diff review, final report |
-| Researcher | `Explore` (codebase) or `general-purpose`, `model: sonnet` (knowledge base via MCP) | Finds facts, returns a capped summary with file paths / page links |
+| Researcher | `Explore`, `model: haiku`, `effort: high` (codebase lookups); `general-purpose`, `model: sonnet` (knowledge base via MCP, or synthesis across systems) | Finds facts, returns a capped summary with file paths / page links |
 | Builder | `general-purpose`, `model: sonnet`, `isolation: worktree` | Implements one step with tests, commits on its own branch |
-| Janitor | `general-purpose`, `model: haiku` | Docs, config, fixtures, renames, mechanical edits |
+| Janitor | `general-purpose`, `model: haiku`, `effort: high` (plus `isolation: worktree` for a TASK.md step) | Docs, config, fixtures, renames, mechanical edits |
+| Checker | `general-purpose`, `model: haiku`, `effort: high` | Runs verification commands, reports pass/fail per command, counts and failing names in ≤15 lines |
 
 ## Depth: lean unless the user says deep
 - **On** only on the user's explicit word: `/lead deep <task>` (whole task), "go deep on S2" (all phases of S2), "deep plan / research / build / review for S2" (that phase). Record it as `Depth:` in TASK.md. Then read `deep.md` in this skill's directory and follow it for those phases.
@@ -31,6 +32,7 @@ Tracker tickets (Jira or similar) are the interface to the team and the business
 - **The ticket owns the requirement**: copy its acceptance criteria into TASK.md tagged with the key; criteria you add are tagged `(ours)`. If the ticket changes or conflicts with the plan, tell the user; do not quietly re-scope.
 - **One task per ticket**: the slug starts with the key (`proj-123-short-name`), so `/lead continue PROJ-123` finds it. TASK.md status is internal and never mirrors or changes the ticket's status.
 - Blockers, scope questions and findings the team should know go to the user as a ready-to-post draft; the user decides whether to post it.
+- **No tracker**: "ticket" then means a step; "next ticket" / "continue" = the next unfinished step in the Handoff. When none remain, say so and offer final checks.
 
 ## Files (the only memory between sessions)
 Keep task state out of the repo history unless the team wants it. Location: `.tasks/` in the **main worktree** (`git worktree list --porcelain | sed -n '1s/^worktree //p'`), even when you run in a linked worktree: `git worktree remove` deletes excluded files with the worktree. Exclude it with `echo .tasks/ >> "$(git rev-parse --git-path info/exclude)"` (works from any worktree). If the main worktree is outside your allowed directories, ask the user to restart with `--add-dir <main worktree>`; do not fall back silently.
@@ -48,13 +50,18 @@ Several Leads may run at once, one per ticket, each in its own worktree.
 
 ## Session start (every time, including after /clear)
 1. State in 3 lines: role (Lead), files you will read (max 4: the profile if present, the TASK.md, up to 2 facts files), and the definition of done for this session. Mention depth only if it is not lean.
-2. Read the `Handoff` section first. It is the source of truth for where things are.
-3. If there is no TASK.md, create one from the user's request before doing anything else. Ask only about things that change the plan; pick sensible defaults otherwise and record them under `Decisions`, including which agents/skills/connectors fill each role.
+2. If the folder is not a git repo, `git init` and make a first commit (builder worktrees need one). If `.claude/skills/lead` in the project is a copy rather than a symlink to the source, tell the user once.
+3. Read the `Handoff` section first. It is the source of truth for where things are.
+4. If there is no TASK.md, create one from the user's request before doing anything else. Ask only about things that change the plan; pick sensible defaults otherwise and record them under `Decisions`, including which agents/skills/connectors fill each role.
 
 ## Delegation rules
 - **Research**: never read more than a couple of targeted files yourself (deep plan excepted). Spawn a researcher with a precise question and a cap: "answer in ≤40 lines, cite path:line or URL for every claim, say what you could not find". Independent questions run as parallel agents in one message.
 - **Knowledge base**: researchers use whatever MCP connector is configured (Confluence, Notion, Jira, Drive…). Tell them which spaces/projects to search (the profile may list them) and to prefer the most recently updated page when sources conflict, flagging the conflict.
-- **Building**: one step per builder. The brief must include everything in the checklist below. Independent steps may run in parallel worktrees.
+- **Why line**: when launching a step, give the user one line saying why it exists, citing the source requirement (`path:line`, ticket key). Not a plan restatement.
+- **Parallelism**: at most 2 builders at once, 1 when the user says tokens are tight. If an agent fails (rate limit, crash), look at its worktree and commit what is there as WIP. Then resume it with `SendMessage`, or start a new builder *without* `isolation` and tell it to `cd` to that worktree's absolute path (`isolation: worktree` always makes a fresh one). Never discard unfinished work.
+- **Building**: one step per builder. The brief must include everything in the checklist below.
+- **Model per step**: when planning, tag each step `Builder: haiku` or `Builder: sonnet`. Haiku (the Janitor, with the full Builder brief) for docs, config, renames, fixtures and single-file changes with an exact spec; Sonnet for new logic, tests that need designing, or more than ~3 files. When unsure, Sonnet.
+- **Escalate once**: if a Haiku agent fails, or its output needs a rework round, redo that work with Sonnet instead of a second Haiku attempt. Note it in the Handoff so similar steps start on Sonnet.
 - **Janitor**: mechanical work with an exact spec. Tell it to be brief.
 - Spawning agents for steps in TASK.md is pre-authorized; do not ask each time. This does not pre-authorize deep.
 - Never paste an agent's raw output into the chat. Relay the conclusion, and record durable facts in `.tasks/facts/`.
@@ -70,8 +77,9 @@ Return in ≤40 lines: the answer, evidence (path:line or URL for each claim), u
 
 ### Builder brief checklist
 - Step ID and its full acceptance criteria (copied, not referenced).
-- "Base: <integration branch> @ <sha>. Before anything else, check HEAD is that commit; if not, `git reset --hard <sha>` (your worktree is fresh). Install dependencies if the worktree has none."
-- Pointers: repo `CLAUDE.md`, the TASK.md, relevant facts files.
+- "Base: <integration branch> @ <sha>. Before anything else, check HEAD is that commit; if not, `git reset --hard <sha>` (your worktree is fresh). Install dependencies if the worktree has none, and run the build once before e2e tests."
+- Pointers: repo `CLAUDE.md`, the TASK.md, relevant facts files, as **absolute paths**. `.tasks/` is git-excluded, so it does not exist inside a fresh worktree.
+- "Commit WIP early and often so a cut-off loses nothing; squash it into one final commit before reporting."
 - Skills or MCP tools it should use (test runner, codegen, ticket lookup), from the profile or your context.
 - Constraints and conventions that are easy to miss (from Handoff).
 - "Write or update tests with the change, not after."
@@ -83,7 +91,7 @@ Return in ≤40 lines: the answer, evidence (path:line or URL for each claim), u
 1. `git diff --stat <integration>...<branch>`, then read the diff of the risky files only (logic, security, data access). Skip lockfiles and generated files.
 2. Check against the acceptance criteria, not against the builder's report. Reports overstate.
 3. Small issues: send them back to the same builder with `SendMessage` (it keeps its context) and ask for a ≤5-line report. Do not fix them yourself.
-4. Merge into the integration branch (prefer fast-forward), then run the verification commands yourself there. Report failures with output; never claim green without running it.
+4. Merge into the integration branch (prefer fast-forward), then have a Checker run the verification commands there (run them yourself only if their output is a few lines). Report failures with the failing output; never claim green without a run.
 5. Remove the builder's worktree and branch.
 6. If dependencies changed, reinstall in your worktree and tell the user to restart this worktree's dev server, if any.
 
@@ -93,7 +101,7 @@ Return in ≤40 lines: the answer, evidence (path:line or URL for each claim), u
 3. Tell the user: *"Step complete. Please run `/clear` before we start the next one."*
 
 ## Reporting to the user
-Short. Lead with the outcome, then what they must know or decide. No tool transcripts, no agent IDs, no restating the plan.
+Quiet by default: at most one line between tool calls, and only when needed. Do not explain screenshots or diffs while reviewing. One short final report per step: the outcome first, then what the user must know or decide. Root-cause analysis and review notes go in one or two lines under the step in TASK.md, not the chat. No tool transcripts, no agent IDs, no restating the plan.
 
 ## TASK.md template
 ```markdown
@@ -109,13 +117,13 @@ Worktree: <absolute path>  ·  Branch: <ticket branch>
 - [ ] (ours) <added by us>
 
 ## Steps
-### S1 — <name> · `todo` · Builder: sonnet · Depth: lean
+### S1 — <name> · `todo` · Builder: haiku | sonnet · Depth: lean
 Deps: none.
 - [ ] <criterion>
 - [ ] Tests: <what proves it>
 
 ## Decisions
-- Tooling: researcher=<…>, builder=<…>, reviewer=<…>, KB=<…>
+- Tooling: researcher=<…>, builder=<…>, janitor=<…>, checker=<…>, reviewer=<…>, KB=<…>
 - <decision> (why, date)
 
 ## Handoff (updated YYYY-MM-DD)
